@@ -6,7 +6,7 @@ pygame.init()
 
 WIDTH, HEIGHT = 800, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Bridge Builder - Steps 12–16")
+pygame.display.set_caption("Bridge Builder - Stable No-Vehicle Version")
 
 clock = pygame.time.Clock()
 
@@ -23,6 +23,7 @@ simulate_mode = False
 history = []            # List of (nodes, node_is_anchor, beams)
 redo_stack = []         # List of undone states to redo
 
+
 def push_history():
     """Save a snapshot of the current build state for undo/redo."""
     global history, redo_stack
@@ -33,19 +34,19 @@ def push_history():
     ))
     redo_stack.clear()  # Clear redo history when a new change is made
 
+
 def undo():
-    """Revert to the previous build state."""
     global nodes, node_is_anchor, beams, history, redo_stack
     if len(history) > 1:
-        state = history.pop()          # Pop current
-        redo_stack.append(state)       # Save it to redo
+        state = history.pop()
+        redo_stack.append(state)
         prev_nodes, prev_anchors, prev_beams = history[-1]
         nodes = prev_nodes.copy()
         node_is_anchor = prev_anchors.copy()
         beams = prev_beams.copy()
 
+
 def redo():
-    """Re-apply the last undone build state."""
     global nodes, node_is_anchor, beams, history, redo_stack
     if redo_stack:
         state = redo_stack.pop()
@@ -56,16 +57,18 @@ def redo():
             state[2].copy()
         )
 
+
 def clear_all():
-    global nodes, node_is_anchor, beams
+    global nodes, node_is_anchor, beams, selected_node
     nodes = []
     node_is_anchor = []
     beams = []
+    selected_node = None
+
 
 def draw_legend(screen):
-    """Draw a semi-transparent legend box that automatically sizes to text."""
+    """Draw top-left semi-transparent build-mode control legend."""
     font = pygame.font.SysFont("consolas", 16)
-
     lines = [
         "BUILD CONTROLS:",
         "Left Click  - Place / Connect Node",
@@ -80,41 +83,31 @@ def draw_legend(screen):
     padding = 8
     line_height = 18
 
-    # Measure the widest text line
-    max_width = 0
-    for txt in lines:
-        w, h = font.size(txt)
-        if w > max_width:
-            max_width = w
-
-    # Final box size
+    max_width = max(font.size(txt)[0] for txt in lines)
     width = max_width + padding * 2
     height = padding * 2 + line_height * len(lines)
 
-    # Semi-transparent box
-    legend_surface = pygame.Surface((width, height), pygame.SRCALPHA)
-    legend_surface.fill((0, 0, 0, 160))
+    surf = pygame.Surface((width, height), pygame.SRCALPHA)
+    surf.fill((0, 0, 0, 160))
 
-    # Draw each line of text
     for i, txt in enumerate(lines):
         label = font.render(txt, True, (255, 255, 255))
-        legend_surface.blit(label, (padding, padding + i * line_height))
+        surf.blit(label, (padding, padding + i * line_height))
 
-    # Draw to screen
-    screen.blit(legend_surface, (10, 10))
-
+    screen.blit(surf, (10, 10))
 
 
-# ------------- Build-mode selection helpers -----------------
+# ----------------- Selection Helpers -------------------
 
 def find_node_at_position(x, y):
     """Return index of a node near the cursor, or None."""
-    pick_radius = 8
-    r2 = pick_radius * pick_radius
+    r = 8
+    r2 = r * r
     for i, (nx, ny) in enumerate(nodes):
-        if (x - nx)**2 + (y - ny)**2 < r2:
+        if (x - nx) ** 2 + (y - ny) ** 2 < r2:
             return i
     return None
+
 
 def find_beam_at_position(x, y):
     """Return index of a beam under cursor by distance to segment."""
@@ -149,24 +142,28 @@ def find_beam_at_position(x, y):
 
     return best_index
 
-def delete_node(index):
-    """Delete node + all attached beams, reindex beams above it."""
+
+def delete_node(idx):
+    """Delete a node + all attached beams; reindex beams above it."""
     global nodes, node_is_anchor, beams
 
-    del nodes[index]
-    del node_is_anchor[index]
+    del nodes[idx]
+    del node_is_anchor[idx]
 
     new_beams = []
     for a, b in beams:
-        if a == index or b == index:
-            continue  # beam touching removed node
-        if a > index: a -= 1
-        if b > index: b -= 1
+        if a == idx or b == idx:
+            continue
+        if a > idx:
+            a -= 1
+        if b > idx:
+            b -= 1
         new_beams.append((a, b))
+
     beams = new_beams
 
 
-# ------------- Physics structures -----------------
+# ------------------ Physics Globals ---------------------
 
 space = None
 pm_nodes = []
@@ -186,17 +183,19 @@ pm_beam_bodies_static = []
 pm_beam_shapes_static = []
 
 pm_bend_springs = []
-beam_stress = {}   # {frozenset((a,b)): strain}
+beam_stress = {}
 
 
-# ------------- Physics setup helpers -----------------
+# ------------------- Physics Setup ----------------------
 
 def create_ground(space):
     body = pymunk.Body(body_type=pymunk.Body.STATIC)
     shape = pymunk.Segment(body, (0, HEIGHT - 10), (WIDTH, HEIGHT - 10), 5)
     shape.friction = 1.0
+    shape.elasticity = 0.0
     space.add(body, shape)
     return shape
+
 
 def create_load(space):
     mass = 5
@@ -206,20 +205,20 @@ def create_load(space):
     body.position = (WIDTH // 2, 50)
     shape = pymunk.Poly.create_box(body, (size, size))
     shape.friction = 0.8
+    shape.elasticity = 0.0
     space.add(body, shape)
     return body
 
+
 def create_beam_collider(space, A_pos, B_pos):
-    """Create a kinematic collision segment that matches the beam."""
+    """Create a kinematic collider that matches the beam."""
     body = pymunk.Body(body_type=pymunk.Body.KINEMATIC)
 
     ax, ay = A_pos
     bx, by = B_pos
     dx = bx - ax
     dy = by - ay
-    length = math.hypot(dx, dy)
-    if length == 0:
-        length = 1.0
+    length = math.hypot(dx, dy) or 1.0
 
     mid_x = (ax + bx) / 2
     mid_y = (ay + by) / 2
@@ -229,12 +228,11 @@ def create_beam_collider(space, A_pos, B_pos):
     half = length / 2
     shape = pymunk.Segment(body, (-half, 0), (half, 0), 2)
     shape.friction = 0.9
+    shape.elasticity = 0.0
 
     space.add(body, shape)
     return body, shape
 
-
-# ------------- Start Simulation -----------------
 
 def start_simulation():
     global space, pm_nodes, pm_joints_pin, pm_joints_spring, rest_lengths
@@ -269,33 +267,37 @@ def start_simulation():
         if anchor:
             body = pymunk.Body(body_type=pymunk.Body.STATIC)
         else:
-            body = pymunk.Body(1, pymunk.moment_for_circle(1, 0, 5))
+            mass = 1
+            radius = 5
+            moment = pymunk.moment_for_circle(mass, 0, radius)
+            body = pymunk.Body(mass, moment)
         body.position = (x, y)
         shape = pymunk.Circle(body, 5)
         shape.friction = 1.0
+        shape.elasticity = 0.0
         space.add(body, shape)
         pm_nodes.append(body)
 
     stiffness = 1000
     damping = 25
-    angle_stiffness = stiffness * 0.3
-    angle_damping = damping * 0.5
+    angle_stiff = stiffness * 0.3
+    angle_damp = damping * 0.5
 
-    # Create beams + springs
+    # Create beams (springs + colliders)
     for a, b in beams:
         A = pm_nodes[a]
         B = pm_nodes[b]
 
-        if node_is_anchor[a] and node_is_anchor[b]:
-            # static beam
+        # If both physics bodies are STATIC, make a static beam only (no constraints)
+        if A.body_type == pymunk.Body.STATIC and B.body_type == pymunk.Body.STATIC:
             body, shape = create_beam_collider(space, A.position, B.position)
             static_beams.append((a, b))
             pm_beam_bodies_static.append(body)
             pm_beam_shapes_static.append(shape)
             beam_stress[frozenset((a, b))] = 0.0
-            continue
+            continue  # ← critical: skip DampedSpring / PinJoint
 
-        # dynamic beam
+        # At least one dynamic: create elastic beam
         rest = (A.position - B.position).length
         rest_lengths.append(rest)
 
@@ -313,7 +315,8 @@ def start_simulation():
 
         beam_stress[frozenset((a, b))] = 0.0
 
-    # Add soft bending springs
+    # Add soft bending springs between neighbors of a node.
+    # These also must avoid static–static pairs.
     adjacency = {}
     for a, b in beam_indices:
         adjacency.setdefault(a, []).append(b)
@@ -322,15 +325,22 @@ def start_simulation():
     for center, neighbors in adjacency.items():
         if len(neighbors) < 2:
             continue
+
         for i in range(len(neighbors)):
             for j in range(i + 1, len(neighbors)):
                 n1 = neighbors[i]
                 n2 = neighbors[j]
+
                 A = pm_nodes[n1]
                 B = pm_nodes[n2]
+
+                # NEW: skip bend springs between two STATIC bodies
+                if A.body_type == pymunk.Body.STATIC and B.body_type == pymunk.Body.STATIC:
+                    continue
+
                 rest = (A.position - B.position).length
                 spring = pymunk.DampedSpring(
-                    A, B, (0, 0), (0, 0), rest, angle_stiffness, angle_damping
+                    A, B, (0, 0), (0, 0), rest, angle_stiff, angle_damp
                 )
                 space.add(spring)
                 pm_bend_springs.append(spring)
@@ -339,47 +349,25 @@ def start_simulation():
 
 
 def stop_simulation():
-    global space, pm_nodes, pm_joints_pin, pm_joints_spring, rest_lengths
-    global pm_ground, pm_load
-    global beam_indices, pm_beam_bodies, pm_beam_shapes
-    global static_beams, pm_beam_bodies_static, pm_beam_shapes_static
-    global pm_bend_springs, beam_stress
-
+    """Stop sim and let Python GC clean up; next start_simulation() recreates everything."""
+    global space
     space = None
-    pm_nodes = []
-    pm_joints_pin = []
-    pm_joints_spring = []
-    rest_lengths = []
-    pm_load = None
-
-    beam_indices = []
-    pm_beam_bodies = []
-    pm_beam_shapes = []
-
-    static_beams = []
-    pm_beam_bodies_static = []
-    pm_beam_shapes_static = []
-
-    pm_bend_springs = []
-    beam_stress = {}
 
 
-# ------------- Physics step helpers -----------------
+# ------------------ Physics Updates ------------------------
 
 def update_beam_collision_shapes():
-    """Update kinematic beam colliders to match current node positions."""
+    """Keep collider segments aligned with beam geometry."""
     # Dynamic beams
     for (a, b), body, shape in zip(beam_indices, pm_beam_bodies, pm_beam_shapes):
         A = pm_nodes[a].position
         B = pm_nodes[b].position
         dx = B.x - A.x
         dy = B.y - A.y
-        length = math.hypot(dx, dy)
-
+        length = math.hypot(dx, dy) or 1.0
         mid = (A + B) / 2
         body.position = mid
         body.angle = math.atan2(dy, dx)
-
         half = length / 2
         shape.unsafe_set_endpoints((-half, 0), (half, 0))
 
@@ -389,28 +377,26 @@ def update_beam_collision_shapes():
         B = pm_nodes[b].position
         dx = B.x - A.x
         dy = B.y - A.y
-        length = math.hypot(dx, dy)
-
+        length = math.hypot(dx, dy) or 1.0
         mid = (A + B) / 2
         body.position = mid
         body.angle = math.atan2(dy, dx)
-
         half = length / 2
         shape.unsafe_set_endpoints((-half, 0), (half, 0))
 
 
 def stress_to_color(stress):
-    """Map strain value to RGB: tension=red, compression=blue."""
+    """Convert strain to RGB color for drawing."""
     limit = 0.5
-    stress = max(-limit, min(limit, stress))
+    s = max(-limit, min(limit, stress))
 
-    if stress >= 0:
-        t = stress / limit
+    if s >= 0:
+        t = s / limit
         r = 255
         g = int(255 * (1 - t))
         b = int(255 * (1 - t))
     else:
-        t = (-stress) / limit
+        t = (-s) / limit
         r = int(255 * (1 - t))
         g = int(255 * (1 - t))
         b = 255
@@ -418,17 +404,17 @@ def stress_to_color(stress):
     return (r, g, b)
 
 
-# ------------------ Initialize empty history ---------------
+# Initialize history
 push_history()
 
-
-# --------------------------- Main loop ----------------------
+# ================= MAIN LOOP =====================
 
 running = True
 while running:
     mouse_x, mouse_y = pygame.mouse.get_pos()
     hovered_node = find_node_at_position(mouse_x, mouse_y)
 
+    # ------------ EVENTS ---------------
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -441,7 +427,7 @@ while running:
             else:
                 stop_simulation()
 
-        # Build-mode only: Undo / Redo / Clear
+        # Undo/Redo/Clear in build mode
         if not simulate_mode and event.type == pygame.KEYDOWN:
             if event.key == pygame.K_z:
                 undo()
@@ -451,13 +437,12 @@ while running:
                 clear_all()
                 push_history()
 
-        # Build mode interaction
+        # -------- Build Mode Interaction --------
         if not simulate_mode:
 
-            # Left click: create node or connect nodes
+            # Left click: create node or connect
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 clicked = find_node_at_position(mouse_x, mouse_y)
-
                 if clicked is None:
                     nodes.append((mouse_x, mouse_y))
                     node_is_anchor.append(False)
@@ -492,14 +477,11 @@ while running:
                         del beams[beam_index]
                         push_history()
 
-    # ------------------ PHYSICS UPDATE ---------------------
-
+    # -------- PHYSICS STEP --------
     if simulate_mode and space is not None:
-
         update_beam_collision_shapes()
         space.step(1 / 60)
 
-        # Beam breaking and stress updates
         break_ratio = 1.4
         plastic_ratio = 1.05
         compress_ratio = 0.7
@@ -538,10 +520,7 @@ while running:
                 spring.rest_length = dist
 
             # Stress = strain
-            if rest != 0:
-                strain = (dist - rest) / rest
-            else:
-                strain = 0
+            strain = (dist - rest) / rest if rest != 0 else 0.0
             beam_stress[key] = strain
 
             new_beam_indices.append((a, b))
@@ -558,25 +537,26 @@ while running:
         pm_beam_bodies = new_bodies
         pm_beam_shapes = new_shapes
 
-    # --------------------- DRAWING -------------------------
+    # ---------------- DRAW ----------------
 
     screen.fill((0, 0, 0))
 
-    # Draw beams
-    if simulate_mode:
+    # Beams
+    if simulate_mode and space is not None:
         for (a, b) in beams:
-            ax, ay = pm_nodes[a].position
-            bx, by = pm_nodes[b].position
-            color = stress_to_color(beam_stress.get(frozenset((a, b)), 0.0))
-            pygame.draw.line(screen, color, (ax, ay), (bx, by), 2)
+            if a < len(pm_nodes) and b < len(pm_nodes):
+                A = pm_nodes[a].position
+                B = pm_nodes[b].position
+                color = stress_to_color(beam_stress.get(frozenset((a, b)), 0.0))
+                pygame.draw.line(screen, color, (A.x, A.y), (B.x, B.y), 2)
     else:
         for a, b in beams:
             ax, ay = nodes[a]
             bx, by = nodes[b]
             pygame.draw.line(screen, (255, 255, 255), (ax, ay), (bx, by), 2)
 
-    # Draw nodes
-    if simulate_mode:
+    # Nodes
+    if simulate_mode and space is not None:
         for body, anchor in zip(pm_nodes, node_is_anchor):
             x, y = body.position
             color = (0, 180, 255) if anchor else (255, 255, 255)
@@ -584,18 +564,18 @@ while running:
     else:
         for i, ((x, y), anchor) in enumerate(zip(nodes, node_is_anchor)):
             if i == hovered_node:
-                pygame.draw.circle(screen, (100, 100, 100), (x, y), 7)
+                pygame.draw.circle(screen, (120, 120, 120), (x, y), 7)
             if i == selected_node:
-                pygame.draw.circle(screen, (150, 150, 150), (x, y), 7)
+                pygame.draw.circle(screen, (180, 180, 180), (x, y), 7)
             color = (0, 180, 255) if anchor else (255, 255, 255)
             pygame.draw.circle(screen, color, (x, y), 5)
 
-    # Draw load
+    # Load
     if simulate_mode and pm_load is not None:
         x, y = pm_load.position
         pygame.draw.rect(screen, (255, 0, 0), (int(x) - 10, int(y) - 10, 20, 20))
 
-    # Draw legend only in build mode
+    # Legend
     if not simulate_mode:
         draw_legend(screen)
 
